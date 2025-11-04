@@ -1,0 +1,175 @@
+import org.springframework.context.annotation.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.orm.hibernate5.*;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.*;
+import javax.sql.DataSource;
+import com.zaxxer.hikari.HikariDataSource;
+import org.hibernate.cfg.Environment;
+import java.util.*;
+
+// ====== ENTITY CLASSES ======
+@Entity
+@Table(name = "student")
+class Student {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private int id;
+    private String name;
+    private int age;
+    public Student() {}
+    public Student(String name, int age) { this.name = name; this.age = age; }
+    public int getId() { return id; }
+    public String getName() { return name; }
+    public int getAge() { return age; }
+    public void setName(String name) { this.name = name; }
+    public void setAge(int age) { this.age = age; }
+}
+
+@Entity
+@Table(name = "account")
+class Account {
+    @Id
+    private int id;
+    private String name;
+    private double balance;
+    public Account() {}
+    public Account(int id, String name, double balance) {
+        this.id = id; this.name = name; this.balance = balance;
+    }
+    public int getId() { return id; }
+    public double getBalance() { return balance; }
+    public void setBalance(double b) { this.balance = b; }
+    public String toString() {
+        return "Account[id=" + id + ", name=" + name + ", balance=" + balance + "]";
+    }
+}
+
+// ====== DAO LAYER ======
+@Repository
+class StudentDAO {
+    @PersistenceContext EntityManager em;
+    @Transactional
+    public void addStudent(Student s) { em.persist(s); }
+    public Student getStudent(int id) { return em.find(Student.class, id); }
+    @Transactional
+    public void updateStudent(int id, String newName) {
+        Student s = em.find(Student.class, id);
+        if (s != null) s.setName(newName);
+    }
+    @Transactional
+    public void deleteStudent(int id) {
+        Student s = em.find(Student.class, id);
+        if (s != null) em.remove(s);
+    }
+}
+
+@Repository
+class AccountDAO {
+    @PersistenceContext EntityManager em;
+    public Account getAccount(int id) { return em.find(Account.class, id); }
+    public void update(Account acc) { em.merge(acc); }
+}
+
+// ====== SERVICE LAYER ======
+@Service
+class BankService {
+    @Autowired private AccountDAO accountDAO;
+
+    @Transactional
+    public void transferMoney(int fromId, int toId, double amt) {
+        Account from = accountDAO.getAccount(fromId);
+        Account to = accountDAO.getAccount(toId);
+        if (from.getBalance() < amt) throw new RuntimeException("Insufficient funds!");
+        from.setBalance(from.getBalance() - amt);
+        to.setBalance(to.getBalance() + amt);
+        accountDAO.update(from);
+        accountDAO.update(to);
+        System.out.println("✅ Transfer successful: " + amt);
+    }
+}
+
+// ====== SPRING CONFIGURATION ======
+@Configuration
+@EnableTransactionManagement
+@ComponentScan(basePackages = "defaultpackage")
+class AppConfig {
+    @Bean
+    public DataSource dataSource() {
+        HikariDataSource ds = new HikariDataSource();
+        ds.setJdbcUrl("jdbc:mysql://localhost:3306/nimbusdb");
+        ds.setUsername("root");
+        ds.setPassword("yourpassword");
+        ds.setDriverClassName("com.mysql.cj.jdbc.Driver");
+        return ds;
+    }
+
+    @Bean
+    public LocalSessionFactoryBean sessionFactory() {
+        LocalSessionFactoryBean sf = new LocalSessionFactoryBean();
+        sf.setDataSource(dataSource());
+        sf.setPackagesToScan("defaultpackage");
+        Properties p = new Properties();
+        p.put(Environment.DIALECT, "org.hibernate.dialect.MySQLDialect");
+        p.put(Environment.HBM2DDL_AUTO, "update");
+        p.put(Environment.SHOW_SQL, "true");
+        sf.setHibernateProperties(p);
+        return sf;
+    }
+
+    @Bean
+    public HibernateTransactionManager txManager() {
+        HibernateTransactionManager tx = new HibernateTransactionManager();
+        tx.setSessionFactory(sessionFactory().getObject());
+        return tx;
+    }
+}
+
+// ====== SPRING CORE (DI DEMO) ======
+class Course {
+    private String courseName;
+    public Course(String courseName) { this.courseName = courseName; }
+    public String getCourseName() { return courseName; }
+}
+
+class StudentDI {
+    private Course course;
+    public StudentDI(Course course) { this.course = course; }
+    public void showInfo() {
+        System.out.println("📘 Student enrolled in: " + course.getCourseName());
+    }
+}
+
+@Configuration
+class DIConfig {
+    @Bean public Course course() { return new Course("Spring & Hibernate Masterclass"); }
+    @Bean public StudentDI studentDI() { return new StudentDI(course()); }
+}
+
+// ====== MAIN APPLICATION ======
+public class SpringHibernateApp {
+    public static void main(String[] args) {
+        // --- PART A: Dependency Injection Demo ---
+        AnnotationConfigApplicationContext ctx1 = new AnnotationConfigApplicationContext(DIConfig.class);
+        StudentDI sdi = ctx1.getBean(StudentDI.class);
+        sdi.showInfo();
+        ctx1.close();
+
+        // --- PART B & C: Hibernate + Transaction Demo ---
+        AnnotationConfigApplicationContext ctx2 = new AnnotationConfigApplicationContext(AppConfig.class);
+        StudentDAO studentDAO = ctx2.getBean(StudentDAO.class);
+        BankService bankService = ctx2.getBean(BankService.class);
+
+        // CRUD Operations
+        Student s = new Student("Amit", 21);
+        studentDAO.addStudent(s);
+        System.out.println("✅ Added Student: " + s.getName());
+        studentDAO.updateStudent(s.getId(), "Amit Kumar");
+        Student fetched = studentDAO.getStudent(s.getId());
+        System.out.println("📘 Updated Student: " + fetched.getName());
+
+        // Transactional Transfer
+        bankService.transferMoney(101, 102, 2000.0);
+        ctx2.close();
+    }
+}

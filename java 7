@@ -1,0 +1,160 @@
+
+
+import java.io.*;
+import java.sql.*;
+import jakarta.servlet.*;
+import jakarta.servlet.http.*;
+
+public class MainServlet extends HttpServlet {
+    private static final String DB_URL1 = "jdbc:mysql://localhost:3306/company";
+    private static final String DB_URL2 = "jdbc:mysql://localhost:3306/school";
+    private static final String USER = "root";
+    private static final String PASS = "yourpassword";
+
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        showHomePage(response);
+    }
+
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        response.setContentType("text/html");
+        PrintWriter out = response.getWriter();
+
+        String action = request.getParameter("action");
+        if (action == null) {
+            showHomePage(response);
+            return;
+        }
+
+        try {
+            switch (action) {
+                case "login":
+                    handleLogin(request, out);
+                    break;
+                case "searchEmployee":
+                    handleEmployeeSearch(request, out);
+                    break;
+                case "markAttendance":
+                    handleAttendance(request, out);
+                    break;
+                default:
+                    showHomePage(response);
+            }
+        } catch (Exception e) {
+            e.printStackTrace(out);
+        }
+    }
+
+    // ---------- LOGIN ----------
+    private void handleLogin(HttpServletRequest request, PrintWriter out) {
+        String user = request.getParameter("username");
+        String pass = request.getParameter("password");
+
+        if ("admin".equals(user) && "1234".equals(pass)) {
+            out.println("<h2>Welcome, " + user + "!</h2>");
+            out.println("<a href='MainServlet?action=showEmployees'>Go to Employee List</a><br>");
+            out.println("<a href='MainServlet?action=showAttendanceForm'>Go to Attendance Portal</a><br>");
+        } else {
+            out.println("<h3>Invalid credentials. Try again.</h3>");
+            out.println(loginForm());
+        }
+    }
+
+    // ---------- EMPLOYEE SEARCH ----------
+    private void handleEmployeeSearch(HttpServletRequest request, PrintWriter out) throws Exception {
+        String empid = request.getParameter("empid");
+
+        Class.forName("com.mysql.cj.jdbc.Driver");
+        Connection con = DriverManager.getConnection(DB_URL1, USER, PASS);
+
+        String query = (empid != null && !empid.isEmpty())
+                ? "SELECT * FROM Employee WHERE EmpID = ?"
+                : "SELECT * FROM Employee";
+
+        PreparedStatement ps = con.prepareStatement(query);
+        if (empid != null && !empid.isEmpty()) ps.setInt(1, Integer.parseInt(empid));
+
+        ResultSet rs = ps.executeQuery();
+
+        out.println("<h2>Employee Records</h2>");
+        out.println("<form method='post' action='MainServlet'>");
+        out.println("<input type='hidden' name='action' value='searchEmployee'>");
+        out.println("Search by ID: <input type='text' name='empid'> <input type='submit' value='Search'>");
+        out.println("</form><br>");
+        out.println("<table border='1'><tr><th>EmpID</th><th>Name</th><th>Salary</th></tr>");
+
+        while (rs.next()) {
+            out.println("<tr><td>" + rs.getInt("EmpID") + "</td><td>"
+                    + rs.getString("Name") + "</td><td>"
+                    + rs.getDouble("Salary") + "</td></tr>");
+        }
+        out.println("</table>");
+        out.println("<br><a href='MainServlet'>Back to Home</a>");
+        con.close();
+    }
+
+    // ---------- ATTENDANCE ----------
+    private void handleAttendance(HttpServletRequest request, PrintWriter out) throws Exception {
+        String sid = request.getParameter("studentId");
+        String date = request.getParameter("date");
+        String status = request.getParameter("status");
+
+        Class.forName("com.mysql.cj.jdbc.Driver");
+        Connection con = DriverManager.getConnection(DB_URL2, USER, PASS);
+        PreparedStatement ps = con.prepareStatement(
+                "INSERT INTO Attendance (StudentID, Date, Status) VALUES (?, ?, ?)");
+        ps.setInt(1, Integer.parseInt(sid));
+        ps.setString(2, date);
+        ps.setString(3, status);
+        int result = ps.executeUpdate();
+
+        if (result > 0) out.println("<h3>Attendance saved successfully!</h3>");
+        else out.println("<h3>Error saving attendance.</h3>");
+        out.println(attendanceForm());
+        out.println("<br><a href='MainServlet'>Back to Home</a>");
+        con.close();
+    }
+
+    // ---------- HOMEPAGE ----------
+    private void showHomePage(HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        out.println("<html><head><title>Nimbus Web App</title></head><body>");
+        out.println("<h1>Welcome to Nimbus Web App</h1>");
+        out.println(loginForm());
+        out.println("<hr>");
+        out.println("<a href='MainServlet?action=searchEmployee'>View Employee Records</a><br>");
+        out.println("<a href='MainServlet?action=showAttendanceForm'>Mark Attendance</a>");
+        out.println("</body></html>");
+    }
+
+    // ---------- HTML HELPERS ----------
+    private String loginForm() {
+        return """
+            <h2>User Login</h2>
+            <form method='post' action='MainServlet'>
+                <input type='hidden' name='action' value='login'>
+                Username: <input type='text' name='username'><br><br>
+                Password: <input type='password' name='password'><br><br>
+                <input type='submit' value='Login'>
+            </form>
+        """;
+    }
+
+    private String attendanceForm() {
+        return """
+            <h2>Mark Student Attendance</h2>
+            <form method='post' action='MainServlet'>
+                <input type='hidden' name='action' value='markAttendance'>
+                Student ID: <input type='text' name='studentId'><br><br>
+                Date: <input type='date' name='date'><br><br>
+                Status: 
+                <select name='status'>
+                    <option value='Present'>Present</option>
+                    <option value='Absent'>Absent</option>
+                </select><br><br>
+                <input type='submit' value='Submit'>
+            </form>
+        """;
+    }
+}

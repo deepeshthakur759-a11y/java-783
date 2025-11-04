@@ -1,0 +1,253 @@
+import org.springframework.context.annotation.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.orm.hibernate5.LocalSessionFactoryBean;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.*;
+import javax.sql.DataSource;
+import com.zaxxer.hikari.HikariDataSource;
+import org.hibernate.SessionFactory;
+import org.hibernate.Session;
+import org.hibernate.cfg.Environment;
+import java.util.*;
+
+@Entity
+@Table(name = "courses")
+class Course {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private int course_id;
+    private String course_name;
+    private int duration;
+    public Course() {}
+    public Course(String name, int duration) {
+        this.course_name = name;
+        this.duration = duration;
+    }
+    public int getCourse_id() { return course_id; }
+    public String getCourse_name() { return course_name; }
+    public void setCourse_name(String n) { this.course_name = n; }
+    public String toString() { return course_name + " (" + duration + " months)"; }
+}
+
+@Entity
+@Table(name = "students")
+class Student {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private int student_id;
+    private String name;
+    private double balance;
+    @ManyToOne
+    @JoinColumn(name = "course_id")
+    private Course course;
+    public Student() {}
+    public Student(String name, Course course, double balance) {
+        this.name = name;
+        this.course = course;
+        this.balance = balance;
+    }
+    public int getStudent_id() { return student_id; }
+    public String getName() { return name; }
+    public Course getCourse() { return course; }
+    public double getBalance() { return balance; }
+    public void setName(String name) { this.name = name; }
+    public void setCourse(Course c) { this.course = c; }
+    public void setBalance(double b) { this.balance = b; }
+    public String toString() {
+        return "Student[id=" + student_id + ", name=" + name + ", course=" + course + ", balance=" + balance + "]";
+    }
+}
+
+@Entity
+@Table(name = "payments")
+class Payment {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private int payment_id;
+    private int student_id;
+    private double amount;
+    private Date date;
+    public Payment() {}
+    public Payment(int student_id, double amount, Date date) {
+        this.student_id = student_id;
+        this.amount = amount;
+        this.date = date;
+    }
+}
+
+@Repository
+class StudentDAO {
+    @Autowired
+    private SessionFactory sessionFactory;
+    @Transactional
+    public void addStudent(Student s) {
+        sessionFactory.getCurrentSession().save(s);
+        System.out.println("Student added: " + s.getName());
+    }
+    public Student getStudent(int id) {
+        return sessionFactory.getCurrentSession().get(Student.class, id);
+    }
+    public List<Student> getAllStudents() {
+        return sessionFactory.getCurrentSession().createQuery("from Student", Student.class).list();
+    }
+    @Transactional
+    public void updateStudent(int id, String newName) {
+        Student s = getStudent(id);
+        if (s != null) {
+            s.setName(newName);
+            sessionFactory.getCurrentSession().update(s);
+            System.out.println("Student updated.");
+        }
+    }
+    @Transactional
+    public void deleteStudent(int id) {
+        Student s = getStudent(id);
+        if (s != null) {
+            sessionFactory.getCurrentSession().delete(s);
+            System.out.println("Student deleted.");
+        }
+    }
+}
+
+@Repository
+class CourseDAO {
+    @Autowired
+    private SessionFactory sessionFactory;
+    @Transactional
+    public void addCourse(Course c) {
+        sessionFactory.getCurrentSession().save(c);
+    }
+    public Course getCourse(int id) {
+        return sessionFactory.getCurrentSession().get(Course.class, id);
+    }
+    public List<Course> getAllCourses() {
+        return sessionFactory.getCurrentSession().createQuery("from Course", Course.class).list();
+    }
+}
+
+@Service
+class FeeService {
+    @Autowired
+    private SessionFactory sessionFactory;
+    @Autowired
+    private StudentDAO studentDAO;
+    @Transactional
+    public void makePayment(int studentId, double amount) {
+        Student s = studentDAO.getStudent(studentId);
+        if (s == null) throw new RuntimeException("Student not found");
+        if (s.getBalance() < amount) throw new RuntimeException("Insufficient balance");
+        s.setBalance(s.getBalance() - amount);
+        sessionFactory.getCurrentSession().update(s);
+        sessionFactory.getCurrentSession().save(new Payment(studentId, amount, new Date()));
+        System.out.println("Payment successful for " + s.getName());
+    }
+    @Transactional
+    public void refundPayment(int studentId, double amount) {
+        Student s = studentDAO.getStudent(studentId);
+        if (s == null) throw new RuntimeException("Student not found");
+        s.setBalance(s.getBalance() + amount);
+        sessionFactory.getCurrentSession().update(s);
+        sessionFactory.getCurrentSession().save(new Payment(studentId, -amount, new Date()));
+        System.out.println("Refund processed for " + s.getName());
+    }
+}
+
+@Configuration
+@EnableTransactionManagement
+@ComponentScan(basePackages = "defaultpackage")
+class AppConfig {
+    @Bean
+    public DataSource dataSource() {
+        HikariDataSource ds = new HikariDataSource();
+        ds.setJdbcUrl("jdbc:mysql://localhost:3306/studentdb");
+        ds.setUsername("root");
+        ds.setPassword("yourpassword");
+        ds.setDriverClassName("com.mysql.cj.jdbc.Driver");
+        return ds;
+    }
+    @Bean
+    public LocalSessionFactoryBean sessionFactory() {
+        LocalSessionFactoryBean sf = new LocalSessionFactoryBean();
+        sf.setDataSource(dataSource());
+        sf.setAnnotatedClasses(Student.class, Course.class, Payment.class);
+        Properties props = new Properties();
+        props.put(Environment.DIALECT, "org.hibernate.dialect.MySQLDialect");
+        props.put(Environment.HBM2DDL_AUTO, "update");
+        props.put(Environment.SHOW_SQL, "true");
+        sf.setHibernateProperties(props);
+        return sf;
+    }
+    @Bean
+    public org.springframework.orm.hibernate5.HibernateTransactionManager txManager(SessionFactory sf) {
+        return new org.springframework.orm.hibernate5.HibernateTransactionManager(sf);
+    }
+}
+
+public class StudentManagementApp {
+    public static void main(String[] args) {
+        AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(AppConfig.class);
+        StudentDAO studentDAO = ctx.getBean(StudentDAO.class);
+        CourseDAO courseDAO = ctx.getBean(CourseDAO.class);
+        FeeService feeService = ctx.getBean(FeeService.class);
+        Scanner sc = new Scanner(System.in);
+        while (true) {
+            System.out.println("\n1. Add Course\n2. Add Student\n3. View All Students\n4. Update Student\n5. Delete Student\n6. Make Payment\n7. Refund Payment\n0. Exit");
+            int choice = sc.nextInt();
+            switch (choice) {
+                case 1:
+                    System.out.print("Enter course name: ");
+                    sc.nextLine();
+                    String cname = sc.nextLine();
+                    System.out.print("Enter duration: ");
+                    int dur = sc.nextInt();
+                    courseDAO.addCourse(new Course(cname, dur));
+                    System.out.println("Course added");
+                    break;
+                case 2:
+                    System.out.print("Enter student name: ");
+                    sc.nextLine();
+                    String name = sc.nextLine();
+                    System.out.print("Enter course ID: ");
+                    int cid = sc.nextInt();
+                    System.out.print("Enter balance: ");
+                    double bal = sc.nextDouble();
+                    Course course = courseDAO.getCourse(cid);
+                    studentDAO.addStudent(new Student(name, course, bal));
+                    break;
+                case 3:
+                    studentDAO.getAllStudents().forEach(System.out::println);
+                    break;
+                case 4:
+                    System.out.print("Enter student ID: ");
+                    int sid = sc.nextInt();
+                    System.out.print("Enter new name: ");
+                    sc.nextLine();
+                    String newName = sc.nextLine();
+                    studentDAO.updateStudent(sid, newName);
+                    break;
+                case 5:
+                    System.out.print("Enter student ID to delete: ");
+                    studentDAO.deleteStudent(sc.nextInt());
+                    break;
+                case 6:
+                    System.out.print("Enter student ID: ");
+                    int psid = sc.nextInt();
+                    System.out.print("Enter amount: ");
+                    double amt = sc.nextDouble();
+                    feeService.makePayment(psid, amt);
+                    break;
+                case 7:
+                    System.out.print("Enter student ID: ");
+                    int rsid = sc.nextInt();
+                    System.out.print("Enter amount: ");
+                    double ramt = sc.nextDouble();
+                    feeService.refundPayment(rsid, ramt);
+                    break;
+                case 0:
+                    ctx.close();
+                    System.exit(0);
+            }
+        }
+    }
+}
